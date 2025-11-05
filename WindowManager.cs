@@ -160,6 +160,44 @@ public class WindowManager : DrawableGameComponent
     /// </summary>
     internal XNAControl ActiveControl { get; set; }
 
+#if DEBUG
+    /// <summary>
+    /// Editor mode allows dragging and resizing controls.
+    /// Toggle with F11 key.
+    /// </summary>
+    public bool EditorMode { get; set; } = false;
+
+    /// <summary>
+    /// Controls whether the debug panel is visible.
+    /// </summary>
+    public bool ShowDebugPanel { get; set; } = true;
+
+    private XNAControl draggedControl = null;
+    private Point dragOffset;
+    private ResizeMode resizeMode = ResizeMode.None;
+    private Rectangle originalControlBounds;
+    private Point resizeStartCursorPos;
+
+    // Debug panel
+    private Point debugPanelPosition = new Point(0, 0);
+    private bool isDraggingDebugPanel = false;
+    private Point debugPanelDragOffset;
+
+    private enum ResizeMode
+    {
+        None,
+        Move,
+        ResizeLeft,
+        ResizeRight,
+        ResizeTop,
+        ResizeBottom,
+        ResizeTopLeft,
+        ResizeTopRight,
+        ResizeBottomLeft,
+        ResizeBottomRight
+    }
+#endif
+
     private GraphicsDeviceManager graphics;
 
     private IGameWindowManager gameWindowManager;
@@ -686,6 +724,36 @@ public class WindowManager : DrawableGameComponent
 
         SoundPlayer.Update(gameTime);
 
+#if DEBUG
+        // F11 cycles through view, edit, hidden
+        if (Keyboard.PressedKeys.Contains(Microsoft.Xna.Framework.Input.Keys.F11))
+        {
+            if (!EditorMode && ShowDebugPanel)
+            {
+                EditorMode = true;
+            }
+            else if (EditorMode && ShowDebugPanel)
+            {
+                EditorMode = false;
+                ShowDebugPanel = false;
+                draggedControl = null;
+            }
+            else
+            {
+                ShowDebugPanel = true;
+            }
+        }
+
+        if (ShowDebugPanel)
+            HandleDebugPanelDragging();
+
+        if (EditorMode)
+            HandleControlDragging();
+
+        if (iniCopiedNotificationTime > TimeSpan.Zero)
+            iniCopiedNotificationTime -= gameTime.ElapsedGameTime;
+#endif
+
         UpdateControls(gameTime);
 
         base.Update(gameTime);
@@ -880,12 +948,12 @@ public class WindowManager : DrawableGameComponent
             Game.Window.ClientBounds.Width - (SceneXPosition * 2), Game.Window.ClientBounds.Height - (SceneYPosition * 2)), Color.White);
 
 #if DEBUG
-        Renderer.DrawString("Active control: " + (ActiveControl == null ? "none" : ActiveControl.Name), 0, Vector2.Zero, Color.Red, 1.0f);
+        if (ShowDebugPanel)
+            DrawDebugInfo();
 
-        if (IMEHandler != null && IMEHandler.TextCompositionEnabled)
-        {
-            Renderer.DrawString("IME Enabled", 0, new Vector2(0, 16), Color.Red, 1.0f);
-        }
+        // Draw resize handles in editor mode
+        if (EditorMode && ActiveControl != null && draggedControl == null)
+            DrawResizeHandles(ActiveControl);
 #endif
 
         if (Cursor.Visible)
@@ -894,5 +962,354 @@ public class WindowManager : DrawableGameComponent
         Renderer.EndDraw();
 
         base.Draw(gameTime);
+    }
+
+    private void DrawResizeHandles(XNAControl control)
+    {
+        const int HANDLE_SIZE = 6;
+        Rectangle windowRect = control.GetWindowRectangle();
+
+        Color handleColor = new Color(0, 255, 255, 200);
+
+        //Corners
+        // Top left
+        Renderer.FillRectangle(new Rectangle(windowRect.Left - HANDLE_SIZE / 2, windowRect.Top - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE), handleColor);
+        // Top right
+        Renderer.FillRectangle(new Rectangle(windowRect.Right - HANDLE_SIZE / 2, windowRect.Top - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE), handleColor);
+        // Bottom left
+        Renderer.FillRectangle(new Rectangle(windowRect.Left - HANDLE_SIZE / 2, windowRect.Bottom - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE), handleColor);
+        // Bottom right
+        Renderer.FillRectangle(new Rectangle(windowRect.Right - HANDLE_SIZE / 2, windowRect.Bottom - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE), handleColor);
+
+        //Middle of each edge
+        // Top
+        Renderer.FillRectangle(new Rectangle(windowRect.Left + windowRect.Width / 2 - HANDLE_SIZE / 2, windowRect.Top - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE), handleColor);
+        // Bottom
+        Renderer.FillRectangle(new Rectangle(windowRect.Left + windowRect.Width / 2 - HANDLE_SIZE / 2, windowRect.Bottom - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE), handleColor);
+        // Left
+        Renderer.FillRectangle(new Rectangle(windowRect.Left - HANDLE_SIZE / 2, windowRect.Top + windowRect.Height / 2 - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE), handleColor);
+        // Right
+        Renderer.FillRectangle(new Rectangle(windowRect.Right - HANDLE_SIZE / 2, windowRect.Top + windowRect.Height / 2 - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE), handleColor);
+
+        // Border around control
+        Renderer.DrawRectangle(windowRect, new Color(0, 255, 255, 128), 1);
+    }
+
+    private Rectangle debugPanelBounds = Rectangle.Empty;
+
+    private Rectangle GetDebugPanelBounds()
+    {
+        if (debugPanelBounds.IsEmpty)
+            return new Rectangle(debugPanelPosition.X, debugPanelPosition.Y, 450, 300);
+        return debugPanelBounds;
+    }
+
+    private TimeSpan iniCopiedNotificationTime = TimeSpan.Zero;
+
+    private void HandleDebugPanelDragging()
+    {
+        Rectangle debugBounds = GetDebugPanelBounds();
+
+        // Right-click to copy INI text
+        if (EditorMode && Cursor.RightPressedDown && debugBounds.Contains(Cursor.Location) && ActiveControl != null)
+        {
+            CopyINIToClipboard();
+            iniCopiedNotificationTime = TimeSpan.FromSeconds(2);
+            return;
+        }
+
+        if (Cursor.LeftPressedDown && !isDraggingDebugPanel && debugBounds.Contains(Cursor.Location))
+        {
+            // Start dragging
+            isDraggingDebugPanel = true;
+            debugPanelDragOffset = new Point(Cursor.Location.X - debugPanelPosition.X,
+                                            Cursor.Location.Y - debugPanelPosition.Y);
+            return;
+        }
+
+        if (!Cursor.LeftDown && isDraggingDebugPanel)
+        {
+            // Stop dragging
+            isDraggingDebugPanel = false;
+            return;
+        }
+
+        if (isDraggingDebugPanel)
+        {
+            // Change pos
+            debugPanelPosition = new Point(Cursor.Location.X - debugPanelDragOffset.X,
+                                          Cursor.Location.Y - debugPanelDragOffset.Y);
+            return;
+        }
+    }
+
+    private void CopyINIToClipboard()
+    {
+        if (ActiveControl == null)
+            return;
+
+        var ctrl = ActiveControl;
+        var iniText = new System.Text.StringBuilder();
+
+        iniText.AppendLine($"[{ctrl.Name}]");
+        iniText.AppendLine($"Location={ctrl.X},{ctrl.Y}");
+        iniText.AppendLine($"Size={ctrl.Width},{ctrl.Height}");
+
+        if (ctrl.Parent != null)
+        {
+            int distFromRight = ctrl.Parent.Width - ctrl.X - ctrl.Width;
+            int distFromBottom = ctrl.Parent.Height - ctrl.Y - ctrl.Height;
+
+            if (distFromRight >= 0)
+                iniText.AppendLine($"DistanceFromRightBorder={distFromRight}");
+            if (distFromBottom >= 0)
+                iniText.AppendLine($"DistanceFromBottomBorder={distFromBottom}");
+        }
+
+#if WINFORMS
+        try
+        {
+            System.Windows.Forms.Clipboard.SetText(iniText.ToString());
+        }
+        catch
+        {
+        }
+#endif
+    }
+
+    private void HandleControlDragging()
+    {
+        const int EDGE_THRESHOLD = 8;
+
+        if (isDraggingDebugPanel)
+            return;
+
+        if (Cursor.LeftPressedDown && ActiveControl != null && draggedControl == null)
+        {
+            draggedControl = ActiveControl;
+            resizeStartCursorPos = Cursor.Location;
+            originalControlBounds = draggedControl.ClientRectangle;
+
+            Rectangle windowRect = draggedControl.GetWindowRectangle();
+            Point cursorPos = Cursor.Location;
+
+            bool nearLeft = cursorPos.X >= windowRect.Left && cursorPos.X <= windowRect.Left + EDGE_THRESHOLD;
+            bool nearRight = cursorPos.X >= windowRect.Right - EDGE_THRESHOLD && cursorPos.X <= windowRect.Right;
+            bool nearTop = cursorPos.Y >= windowRect.Top && cursorPos.Y <= windowRect.Top + EDGE_THRESHOLD;
+            bool nearBottom = cursorPos.Y >= windowRect.Bottom - EDGE_THRESHOLD && cursorPos.Y <= windowRect.Bottom;
+
+            if (nearLeft && nearTop)
+                resizeMode = ResizeMode.ResizeTopLeft;
+            else if (nearRight && nearTop)
+                resizeMode = ResizeMode.ResizeTopRight;
+            else if (nearLeft && nearBottom)
+                resizeMode = ResizeMode.ResizeBottomLeft;
+            else if (nearRight && nearBottom)
+                resizeMode = ResizeMode.ResizeBottomRight;
+            else if (nearLeft)
+                resizeMode = ResizeMode.ResizeLeft;
+            else if (nearRight)
+                resizeMode = ResizeMode.ResizeRight;
+            else if (nearTop)
+                resizeMode = ResizeMode.ResizeTop;
+            else if (nearBottom)
+                resizeMode = ResizeMode.ResizeBottom;
+            else
+                resizeMode = ResizeMode.Move;
+
+            if (resizeMode == ResizeMode.Move)
+            {
+                dragOffset = new Point(Cursor.Location.X - draggedControl.GetWindowPoint().X,
+                                       Cursor.Location.Y - draggedControl.GetWindowPoint().Y);
+            }
+        }
+        else if (!Cursor.LeftDown && draggedControl != null)
+        {
+            draggedControl = null;
+            resizeMode = ResizeMode.None;
+        }
+        else if (draggedControl != null)
+        {
+            if (resizeMode == ResizeMode.Move)
+            {
+                Point newWindowPoint = new Point(Cursor.Location.X - dragOffset.X,
+                                                Cursor.Location.Y - dragOffset.Y);
+
+                if (draggedControl.Parent != null)
+                {
+                    Point parentWindowPoint = draggedControl.Parent.GetWindowPoint();
+                    int parentTotalScaling = draggedControl.Parent.GetTotalScalingRecursive();
+                    draggedControl.X = (newWindowPoint.X - parentWindowPoint.X) / parentTotalScaling;
+                    draggedControl.Y = (newWindowPoint.Y - parentWindowPoint.Y) / parentTotalScaling;
+                }
+                else
+                {
+                    draggedControl.X = newWindowPoint.X;
+                    draggedControl.Y = newWindowPoint.Y;
+                }
+            }
+            else
+            {
+                // Resize the control
+                int deltaX = Cursor.Location.X - resizeStartCursorPos.X;
+                int deltaY = Cursor.Location.Y - resizeStartCursorPos.Y;
+
+                // Apply scaling if control has a parent
+                int parentTotalScaling = 1;
+                if (draggedControl.Parent != null)
+                {
+                    parentTotalScaling = draggedControl.Parent.GetTotalScalingRecursive();
+                    deltaX /= parentTotalScaling;
+                    deltaY /= parentTotalScaling;
+                }
+
+                Rectangle newBounds = originalControlBounds;
+
+                switch (resizeMode)
+                {
+                    case ResizeMode.ResizeLeft:
+                        newBounds.X = originalControlBounds.X + deltaX;
+                        newBounds.Width = Math.Max(10, originalControlBounds.Width - deltaX);
+                        break;
+                    case ResizeMode.ResizeRight:
+                        newBounds.Width = Math.Max(10, originalControlBounds.Width + deltaX);
+                        break;
+                    case ResizeMode.ResizeTop:
+                        newBounds.Y = originalControlBounds.Y + deltaY;
+                        newBounds.Height = Math.Max(10, originalControlBounds.Height - deltaY);
+                        break;
+                    case ResizeMode.ResizeBottom:
+                        newBounds.Height = Math.Max(10, originalControlBounds.Height + deltaY);
+                        break;
+                    case ResizeMode.ResizeTopLeft:
+                        newBounds.X = originalControlBounds.X + deltaX;
+                        newBounds.Y = originalControlBounds.Y + deltaY;
+                        newBounds.Width = Math.Max(10, originalControlBounds.Width - deltaX);
+                        newBounds.Height = Math.Max(10, originalControlBounds.Height - deltaY);
+                        break;
+                    case ResizeMode.ResizeTopRight:
+                        newBounds.Y = originalControlBounds.Y + deltaY;
+                        newBounds.Width = Math.Max(10, originalControlBounds.Width + deltaX);
+                        newBounds.Height = Math.Max(10, originalControlBounds.Height - deltaY);
+                        break;
+                    case ResizeMode.ResizeBottomLeft:
+                        newBounds.X = originalControlBounds.X + deltaX;
+                        newBounds.Width = Math.Max(10, originalControlBounds.Width - deltaX);
+                        newBounds.Height = Math.Max(10, originalControlBounds.Height + deltaY);
+                        break;
+                    case ResizeMode.ResizeBottomRight:
+                        newBounds.Width = Math.Max(10, originalControlBounds.Width + deltaX);
+                        newBounds.Height = Math.Max(10, originalControlBounds.Height + deltaY);
+                        break;
+                }
+
+                draggedControl.ClientRectangle = newBounds;
+            }
+        }
+    }
+
+    private void DrawDebugInfo()
+    {
+        const int lineHeight = 16;
+        const int padding = 8;
+        const int panelWidth = 450;
+
+        int currentY = 0;
+        var lines = new List<(string text, Color color)>();
+
+        lines.Add(EditorMode
+            ? ("*** EDIT MODE (F11 to toggle) ***", Color.Yellow)
+            : ("*** VIEW MODE (F11 to toggle) ***", Color.LightGray));
+
+        if (EditorMode)
+            lines.Add(("Right-click panel to copy INI", Color.Orange));
+
+        lines.Add(("", Color.White));
+
+        string controlName = ActiveControl?.Name ?? "none";
+        lines.Add(($"Active control: {controlName}", Color.Red));
+
+        if (ActiveControl != null)
+        {
+            var ctrl = ActiveControl;
+
+            lines.Add(($"Position (relative): X={ctrl.X}, Y={ctrl.Y}", Color.White));
+            var abs = ctrl.GetWindowPoint();
+            lines.Add(($"Position (absolute): X={abs.X}, Y={abs.Y}", Color.White));
+            lines.Add(($"Size: W={ctrl.Width}, H={ctrl.Height}", Color.White));
+
+            var rect = ctrl.ClientRectangle;
+            lines.Add(($"Bounds: X={rect.X}, Y={rect.Y}, R={rect.Right}, B={rect.Bottom}", Color.White));
+
+            if (ctrl.Parent != null)
+            {
+                string hierarchy = BuildParentHierarchy(ctrl);
+                lines.Add(($"Parent: {hierarchy}", Color.White));
+
+                int distRight = ctrl.Parent.Width - ctrl.X - ctrl.Width;
+                int distBottom = ctrl.Parent.Height - ctrl.Y - ctrl.Height;
+                lines.Add(($"DistanceFromRight={distRight}, DistanceFromBottom={distBottom}", Color.White));
+            }
+
+            lines.Add(($"Enabled={ctrl.Enabled}, Visible={ctrl.Visible}", Color.White));
+
+            if (EditorMode)
+            {
+                lines.Add(("", Color.White));
+                lines.Add(("--- INI ---", Color.Lime));
+                lines.Add(($"[{ctrl.Name}]", Color.Lime));
+                lines.Add(($"Location={ctrl.X},{ctrl.Y}", Color.Lime));
+                lines.Add(($"Size={ctrl.Width},{ctrl.Height}", Color.Lime));
+
+                if (ctrl.Parent != null)
+                {
+                    int distRight = ctrl.Parent.Width - ctrl.X - ctrl.Width;
+                    int distBottom = ctrl.Parent.Height - ctrl.Y - ctrl.Height;
+                    if (distRight >= 0) lines.Add(($"DistanceFromRightBorder={distRight}", Color.Cyan));
+                    if (distBottom >= 0) lines.Add(($"DistanceFromBottomBorder={distBottom}", Color.Cyan));
+                }
+            }
+        }
+
+        if (IMEHandler?.TextCompositionEnabled == true)
+            lines.Add(("IME Enabled", Color.Red));
+
+        if (iniCopiedNotificationTime > TimeSpan.Zero)
+        {
+            lines.Add(("", Color.White));
+            lines.Add(("INI copied to clipboard", Color.Lime));
+        }
+
+        int panelHeight = lines.Count * lineHeight + padding * 2;
+
+        var panelRect = new Rectangle(debugPanelPosition.X, debugPanelPosition.Y, panelWidth, panelHeight);
+        debugPanelBounds = panelRect;
+
+        Renderer.FillRectangle(panelRect, new Color(0, 0, 0, 200));
+        Renderer.DrawRectangle(panelRect, isDraggingDebugPanel ? Color.Yellow : new Color(100, 100, 100, 255), 2);
+
+        var titleBar = new Rectangle(debugPanelPosition.X, debugPanelPosition.Y, panelWidth, lineHeight + padding);
+        Renderer.FillRectangle(titleBar, new Color(40, 40, 60, 220));
+
+        currentY = debugPanelPosition.Y + padding;
+        foreach (var (text, color) in lines)
+        {
+            Renderer.DrawString(text, 0, new Vector2(debugPanelPosition.X + padding, currentY), color, 1.0f);
+            currentY += lineHeight;
+        }
+    }
+
+    private string BuildParentHierarchy(XNAControl control)
+    {
+        var parts = new List<string>();
+        var current = control.Parent;
+
+        while (current != null)
+        {
+            parts.Add(current.Name ?? "(unnamed)");
+            current = current.Parent;
+        }
+
+        return string.Join(" > ", parts);
     }
 }
