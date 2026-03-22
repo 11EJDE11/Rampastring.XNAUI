@@ -188,6 +188,7 @@
 
   <ItemGroup>
     <PackageReference Include="FontStashSharp.TextShapers.HarfBuzz" Version="1.2.2" />
+    <PackageReference Include="FreeTypeSharp" Version="1.1.3" />
   </ItemGroup>
 
   <ItemGroup Condition="!$(DefineConstants.Contains('XNA'))">

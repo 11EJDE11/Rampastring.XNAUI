@@ -59,7 +59,10 @@ public static class FontManager
     /// </summary>
     private static FontSystem CreateFontSystem()
     {
-        var settings = new FontSystemSettings();
+        var settings = new FontSystemSettings
+        {
+            FontLoader = new FreeTypeFontLoader()
+        };
 
         if (textShapingSettings.Enabled)
         {
