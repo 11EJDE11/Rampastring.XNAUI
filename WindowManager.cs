@@ -80,6 +80,11 @@ public class WindowManager : DrawableGameComponent
     private List<XNAControl> Controls = new List<XNAControl>();
     private readonly List<XNAControl> _tunnelingPath = new List<XNAControl>();
 
+    /// <summary>
+    /// The controls added directly to the WindowManager, in update and draw order.
+    /// </summary>
+    public IReadOnlyList<XNAControl> TopLevelControls => Controls;
+
     private List<Callback> Callbacks = new List<Callback>();
 
     private readonly object locker = new object();

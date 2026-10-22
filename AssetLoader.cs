@@ -84,6 +84,42 @@ public static class AssetLoader
     }
 
     /// <summary>
+    /// Reloads every cached texture from disk. A texture whose size is unchanged is updated in place,
+    /// so every control using it shows the new image. A texture whose size changed is replaced in the
+    /// cache instead: later <see cref="LoadTexture"/> calls return the new texture, while controls that
+    /// already hold the old one keep showing it.
+    /// </summary>
+    /// <returns>The names of the textures whose size changed.</returns>
+    public static List<string> ReloadCachedTextures()
+    {
+        var resizedTextureNames = new List<string>();
+
+        foreach (Texture2D cachedTexture in new List<Texture2D>(textureCache))
+        {
+            Texture2D reloadedTexture = LoadTextureInternal(cachedTexture.Name);
+            if (reloadedTexture == null)
+                continue;
+
+            if (reloadedTexture.Width == cachedTexture.Width && reloadedTexture.Height == cachedTexture.Height)
+            {
+                var data = new Color[reloadedTexture.Width * reloadedTexture.Height];
+                reloadedTexture.GetData(data);
+                cachedTexture.SetData(data);
+                reloadedTexture.Dispose();
+                continue;
+            }
+
+            textureCache.Remove(cachedTexture);
+            cachedTexture.Disposing -= CachedTexture_Disposing;
+            textureCache.Add(reloadedTexture);
+            reloadedTexture.Disposing += CachedTexture_Disposing;
+            resizedTextureNames.Add(cachedTexture.Name);
+        }
+
+        return resizedTextureNames;
+    }
+
+    /// <summary>
     /// Loads a texture with the specific name. Does not look at textures in 
     /// the texture cache, and doesn't add loaded textures to the texture cache.
     /// </summary>
