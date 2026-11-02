@@ -615,7 +615,7 @@ public class XNADropDown : XNAControl
         if (item.Text != null)
         {
             int textY = y + Renderer.GetTextYPadding(item.Text, FontIndex, ItemHeight);
-            DrawStringWithShadow(item.Text, FontIndex, new Vector2(textX, y + 1), textColor);
+            DrawStringWithShadow(item.Text, FontIndex, new Vector2(textX, textY), textColor);
         }
     }
 }
